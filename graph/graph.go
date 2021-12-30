@@ -1,9 +1,10 @@
 package graph
 
 import (
-	"fmt"
+	"math/rand"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/EliFeinberg/DisneyLandPath/utils"
 )
@@ -131,18 +132,23 @@ func (g *Graph) Traversal(startTime int) ([]*Node, int) {
 			prevMatrix[i][j] = nil
 		}
 	}
-	Time := startTime
 	q := make([]queueItem, 0)
+
+	// Shuffle nodes to determine if starting point matters
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(q), func(i, j int) { q[i], q[j] = q[j], q[i] })
+
 	for i := 0; i < len(g.Nodes); i++ {
 		costMatrix[i][1<<uint(i)] = 0
 		prevMatrix[i][1<<uint(i)] = g.Nodes[i]
-		q = append(q, queueItem{g.Nodes[i], Time, 1 << uint(i)})
+		q = append(q, queueItem{g.Nodes[i], startTime, 1 << uint(i)})
 	}
 
 	for len(q) > 0 {
 		item := q[0]
 		q = q[1:]
 		currIdx, currTime, currMask := item.node.Index, item.time, item.mask
+		// fmt.Println("Current node:", currIdx, "Current time:", currTime, "Current mask:", currMask)
 		if currTime/30 > 31 {
 			continue
 		}
@@ -153,18 +159,19 @@ func (g *Graph) Traversal(startTime int) ([]*Node, int) {
 			edgeIdx := edge.node.Index
 			edgeTime := edge.time + item.node.WaitTimes[currTime/30]
 			edgeMask := currMask | (1 << uint(edgeIdx))
+			// fmt.Println("Edge node:", edgeIdx, "Edge time:", edgeTime, "Edge mask:", edgeMask)
 			if costMatrix[edgeIdx][edgeMask] > costMatrix[currIdx][currMask]+edgeTime {
 				costMatrix[edgeIdx][edgeMask] = costMatrix[currIdx][currMask] + edgeTime
 				prevMatrix[edgeIdx][edgeMask] = item.node
-				Time = costMatrix[currIdx][currMask] + edgeTime + currTime
+				Time := costMatrix[currIdx][currMask] + edgeTime + currTime
 				q = append(q, queueItem{edge.node, Time, edgeMask})
 			}
 		}
 	}
 
-	for i := 0; i < len(costMatrix); i++ {
-		fmt.Println(costMatrix[i][(1<<uint(len(g.Nodes)))-1])
-	}
+	// for i := 0; i < len(costMatrix); i++ {
+	// 	fmt.Println(costMatrix[i][(1<<uint(len(g.Nodes)))-1])
+	// }
 
 	path := make([]*Node, 0)
 	endIdx, totTime, currMask := -1, MAX_INT, uint((1<<uint(len(g.Nodes)))-1)
@@ -216,17 +223,19 @@ func (g *Graph) TraversalGo(startTime int) ([]*Node, int) {
 		q := make([]queueItem, 0)
 		costMatrix[i][1<<uint(i)] = 0
 		prevMatrix[i][1<<uint(i)] = g.Nodes[i]
+		// fmt.Printf("Queue memory loc %p\n", &q)
 		q = append(q, queueItem{g.Nodes[i], startTime, 1 << uint(i)})
 		wg.Add(1)
-		go workerDijkstra(startTime, q, costMatrix, prevMatrix, &wg)
+		// fmt.Println("Starting at node", g.Nodes[i].Name, " work #", i)
+		go workerDijkstra(q, costMatrix, prevMatrix, &wg)
 
 	}
 
 	wg.Wait()
 
-	for i := 0; i < len(costMatrix); i++ {
-		fmt.Println(costMatrix[i][(1<<uint(len(g.Nodes)))-1])
-	}
+	// for i := 0; i < len(costMatrix); i++ {
+	// 	fmt.Println(costMatrix[i][(1<<uint(len(g.Nodes)))-1])
+	// }
 
 	path := make([]*Node, 0)
 	endIdx, totTime, currMask := -1, MAX_INT, uint((1<<uint(len(g.Nodes)))-1)
@@ -257,13 +266,14 @@ func (g *Graph) TraversalGo(startTime int) ([]*Node, int) {
 	return reverse(path), totTime
 }
 
-func workerDijkstra(startTime int, q []queueItem, costMatrix [][]int, prevMatrix [][]*Node, wg *sync.WaitGroup) {
+func workerDijkstra(q []queueItem, costMatrix [][]int, prevMatrix [][]*Node, wg *sync.WaitGroup) {
 	defer wg.Done()
-	Time := startTime
 	for len(q) > 0 {
 		item := q[0]
 		q = q[1:]
 		currIdx, currTime, currMask := item.node.Index, item.time, item.mask
+		// fmt.Println("Current node:", currIdx, "Current time:", currTime, "Current mask:", currMask)
+
 		if currTime/30 > 31 {
 			continue
 		}
@@ -274,14 +284,16 @@ func workerDijkstra(startTime int, q []queueItem, costMatrix [][]int, prevMatrix
 			edgeIdx := edge.node.Index
 			edgeTime := edge.time + item.node.WaitTimes[currTime/30]
 			edgeMask := currMask | (1 << uint(edgeIdx))
+			// fmt.Println("Edge node:", edgeIdx, "Edge time:", edgeTime, "Edge mask:", edgeMask)
 			if costMatrix[edgeIdx][edgeMask] > costMatrix[currIdx][currMask]+edgeTime {
 				costMatrix[edgeIdx][edgeMask] = costMatrix[currIdx][currMask] + edgeTime
 				prevMatrix[edgeIdx][edgeMask] = item.node
-				Time = costMatrix[currIdx][currMask] + edgeTime + currTime
+				Time := costMatrix[currIdx][currMask] + edgeTime + currTime
 				q = append(q, queueItem{edge.node, Time, edgeMask})
 			}
 		}
 	}
+	// fmt.Println("Done")
 }
 
 // reverse a slice of nodes
