@@ -3,8 +3,8 @@ package utils
 import (
 	"encoding/csv"
 	"os"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 // parse csv files and return columns as a list of lists of strings
@@ -31,7 +31,7 @@ func ParseCSV(filePath string) [][]string {
 }
 
 // Calculates the index of a ride time given its string time
-func calculateIdx(time string) int {
+func CalculateIdx(time string) int {
 	// convert time to int
 	colon := strings.Index(time, ":")
 	hour, err := strconv.Atoi(time[:colon])
@@ -42,5 +42,5 @@ func calculateIdx(time string) int {
 	if err != nil {
 		panic(err)
 	}
-	return (hour * 2 + minute / 30)
+	return (hour*2 + minute/30)
 }

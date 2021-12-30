@@ -1,16 +1,23 @@
 package graph
 
 import (
+	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/EliFeinberg/DisneyLandPath/utils"
 )
 
-var (
-	_graphNodes []*Node
+const (
+	MAX_INT = int(^uint(0) >> 1)
 )
 
-func buildGraph(rideCSV string, walkCSV string, idCSV string) {
+type Graph struct {
+	Nodes []*Node
+}
+
+func BuildGraph(rideCSV string, walkCSV string, idCSV string) Graph {
+	_graphNodes := make([]*Node, 0)
 	// parse CSV files
 	rideRows := utils.ParseCSV(rideCSV)
 	rideRows = rideRows[1:] // remove header row
@@ -19,6 +26,7 @@ func buildGraph(rideCSV string, walkCSV string, idCSV string) {
 	idRows := utils.ParseCSV(idCSV)
 	idRows = idRows[1:] // remove header row
 
+	// fmt.Println("CSV files parsed")
 	// build graph
 
 	// setup graph nodes slice
@@ -30,15 +38,8 @@ func buildGraph(rideCSV string, walkCSV string, idCSV string) {
 		if err != nil {
 			panic(err)
 		}
-
-		Node := &Node{
-			_idx:       i,
-			_name:      ride[2],
-			_waitTimes: make([]int, len(rideRows)),
-			_edges:     make([]*Edge, len(rideRows)),
-		}
-		_graphNodes = append(_graphNodes, Node)
-
+		_graphNodes = append(_graphNodes, New(i, ride[2], len(idRows)))
+		_graphNodes[i].addWalkTime(i, -1, _graphNodes[i])
 		idMap[rideID] = i
 		i++
 	}
@@ -60,14 +61,8 @@ func buildGraph(rideCSV string, walkCSV string, idCSV string) {
 				panic(err)
 			}
 
-			_graphNodes[rideA]._edges = append(_graphNodes[rideA]._edges, &Edge{
-				time: walkTime,
-				node: _graphNodes[rideB],
-			})
-			_graphNodes[rideB]._edges = append(_graphNodes[rideB]._edges, &Edge{
-				time: walkTime,
-				node: _graphNodes[rideA],
-			})
+			_graphNodes[rideA].addWalkTime(rideB, walkTime, _graphNodes[rideB])
+			_graphNodes[rideB].addWalkTime(rideA, walkTime, _graphNodes[rideA])
 		}
 	}
 	// adds ride wait times to each node
@@ -78,13 +73,223 @@ func buildGraph(rideCSV string, walkCSV string, idCSV string) {
 		}
 		ride, exist := idMap[val]
 		if exist {
-			waitTime := utils.calculateIdx(rideTime[1])
+			waitTime := utils.CalculateIdx(rideTime[1])
+			Time, err := strconv.Atoi(rideTime[2])
+			if err != nil {
+				panic(err)
+			}
 
 			if waitTime < 16 {
-				_graphNodes[ride]._waitTimes[waitTime] = waitTime
+				continue
 			}
+			_graphNodes[ride].addWaitTime(waitTime-16, Time)
+
 		}
 
 	}
 
+	for i := 0; i < len(_graphNodes); i++ {
+		if !_graphNodes[i].linked {
+			for j := 0; j < len(_graphNodes); j++ {
+				_graphNodes[j].rmAdj(i)
+			}
+			_graphNodes = append(_graphNodes[:i], _graphNodes[i+1:]...)
+			i--
+		}
+	}
+	//Testing
+	// for _, node := range _graphNodes {
+	// 	for i := 0; i < 32; i++ {
+	// 		fmt.Println("Wait time at", node.Name, "at", i, ": ", node.WaitTimes[i])
+	// 	}
+	// }
+
+	return Graph{
+		Nodes: _graphNodes,
+	}
+}
+
+type queueItem struct {
+	node *Node
+	time int
+	mask int
+}
+
+// Dijkstra's algorithm traversal of graph
+func (g *Graph) Traversal(startTime int) ([]*Node, int) {
+	costMatrix := make([][]int, len(g.Nodes))
+	for i := range costMatrix {
+		costMatrix[i] = make([]int, 1<<uint(len(g.Nodes)))
+		for j := range costMatrix[i] {
+			costMatrix[i][j] = MAX_INT
+		}
+	}
+	prevMatrix := make([][]*Node, len(g.Nodes))
+	for i := range prevMatrix {
+		prevMatrix[i] = make([]*Node, 1<<uint(len(g.Nodes)))
+		for j := range prevMatrix[i] {
+			prevMatrix[i][j] = nil
+		}
+	}
+	Time := startTime
+	q := make([]queueItem, 0)
+	for i := 0; i < len(g.Nodes); i++ {
+		costMatrix[i][1<<uint(i)] = 0
+		prevMatrix[i][1<<uint(i)] = g.Nodes[i]
+		q = append(q, queueItem{g.Nodes[i], Time, 1 << uint(i)})
+	}
+
+	for len(q) > 0 {
+		item := q[0]
+		q = q[1:]
+		currIdx, currTime, currMask := item.node.Index, item.time, item.mask
+		if currTime/30 > 31 {
+			continue
+		}
+		for _, edge := range item.node.Edges {
+			if edge.node == nil || edge.node.Index == currIdx {
+				continue
+			}
+			edgeIdx := edge.node.Index
+			edgeTime := edge.time + item.node.WaitTimes[currTime/30]
+			edgeMask := currMask | (1 << uint(edgeIdx))
+			if costMatrix[edgeIdx][edgeMask] > costMatrix[currIdx][currMask]+edgeTime {
+				costMatrix[edgeIdx][edgeMask] = costMatrix[currIdx][currMask] + edgeTime
+				prevMatrix[edgeIdx][edgeMask] = item.node
+				Time = costMatrix[currIdx][currMask] + edgeTime + currTime
+				q = append(q, queueItem{edge.node, Time, edgeMask})
+			}
+		}
+	}
+
+	for i := 0; i < len(costMatrix); i++ {
+		fmt.Println(costMatrix[i][(1<<uint(len(g.Nodes)))-1])
+	}
+
+	path := make([]*Node, 0)
+	endIdx, totTime, currMask := -1, MAX_INT, uint((1<<uint(len(g.Nodes)))-1)
+	for j := 1; j < 1<<len(g.Nodes); j++ {
+		for i := 0; i < len(g.Nodes); i++ {
+			if totTime > costMatrix[i][1<<len(g.Nodes)-j] {
+				totTime = costMatrix[i][1<<len(g.Nodes)-j]
+				endIdx = i
+				currMask = uint((1 << len(g.Nodes)) - j)
+			}
+		}
+		if endIdx != -1 {
+			break
+		}
+	}
+
+	curr := g.Nodes[endIdx]
+	path = append(path, curr)
+	for curr != nil {
+		indx := curr.Index
+		curr = prevMatrix[indx][currMask]
+		if curr == nil || curr.Index == indx {
+			break
+		}
+		currMask = currMask & (currMask - (1 << uint(indx)))
+		path = append(path, curr)
+	}
+	return reverse(path), totTime
+}
+
+func (g *Graph) TraversalGo(startTime int) ([]*Node, int) {
+	var wg sync.WaitGroup
+	costMatrix := make([][]int, len(g.Nodes))
+	for i := range costMatrix {
+		costMatrix[i] = make([]int, 1<<uint(len(g.Nodes)))
+		for j := range costMatrix[i] {
+			costMatrix[i][j] = MAX_INT
+		}
+	}
+	prevMatrix := make([][]*Node, len(g.Nodes))
+	for i := range prevMatrix {
+		prevMatrix[i] = make([]*Node, 1<<uint(len(g.Nodes)))
+		for j := range prevMatrix[i] {
+			prevMatrix[i][j] = nil
+		}
+	}
+
+	for i := 0; i < len(g.Nodes); i++ {
+		q := make([]queueItem, 0)
+		costMatrix[i][1<<uint(i)] = 0
+		prevMatrix[i][1<<uint(i)] = g.Nodes[i]
+		q = append(q, queueItem{g.Nodes[i], startTime, 1 << uint(i)})
+		wg.Add(1)
+		go workerDijkstra(startTime, q, costMatrix, prevMatrix, &wg)
+
+	}
+
+	wg.Wait()
+
+	for i := 0; i < len(costMatrix); i++ {
+		fmt.Println(costMatrix[i][(1<<uint(len(g.Nodes)))-1])
+	}
+
+	path := make([]*Node, 0)
+	endIdx, totTime, currMask := -1, MAX_INT, uint((1<<uint(len(g.Nodes)))-1)
+	for j := 1; j < 1<<len(g.Nodes); j++ {
+		for i := 0; i < len(g.Nodes); i++ {
+			if totTime > costMatrix[i][1<<len(g.Nodes)-j] {
+				totTime = costMatrix[i][1<<len(g.Nodes)-j]
+				endIdx = i
+				currMask = uint((1 << len(g.Nodes)) - j)
+			}
+		}
+		if endIdx != -1 {
+			break
+		}
+	}
+
+	curr := g.Nodes[endIdx]
+	path = append(path, curr)
+	for curr != nil {
+		indx := curr.Index
+		curr = prevMatrix[indx][currMask]
+		if curr == nil || curr.Index == indx {
+			break
+		}
+		currMask = currMask & (currMask - (1 << uint(indx)))
+		path = append(path, curr)
+	}
+	return reverse(path), totTime
+}
+
+func workerDijkstra(startTime int, q []queueItem, costMatrix [][]int, prevMatrix [][]*Node, wg *sync.WaitGroup) {
+	defer wg.Done()
+	Time := startTime
+	for len(q) > 0 {
+		item := q[0]
+		q = q[1:]
+		currIdx, currTime, currMask := item.node.Index, item.time, item.mask
+		if currTime/30 > 31 {
+			continue
+		}
+		for _, edge := range item.node.Edges {
+			if edge.node == nil || edge.node.Index == currIdx {
+				continue
+			}
+			edgeIdx := edge.node.Index
+			edgeTime := edge.time + item.node.WaitTimes[currTime/30]
+			edgeMask := currMask | (1 << uint(edgeIdx))
+			if costMatrix[edgeIdx][edgeMask] > costMatrix[currIdx][currMask]+edgeTime {
+				costMatrix[edgeIdx][edgeMask] = costMatrix[currIdx][currMask] + edgeTime
+				prevMatrix[edgeIdx][edgeMask] = item.node
+				Time = costMatrix[currIdx][currMask] + edgeTime + currTime
+				q = append(q, queueItem{edge.node, Time, edgeMask})
+			}
+		}
+	}
+}
+
+// reverse a slice of nodes
+func reverse(list []*Node) []*Node {
+	a := make([]*Node, len(list))
+	copy(a, list)
+	for i, j := 0, len(a)-1; i < j; i, j = i+1, j-1 {
+		a[i], a[j] = a[j], a[i]
+	}
+	return a
 }
