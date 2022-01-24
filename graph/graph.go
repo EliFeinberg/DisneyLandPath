@@ -218,13 +218,17 @@ func (g *Graph) TraversalGo(startTime int) ([]*Node, int) {
 			prevMatrix[i][j] = nil
 		}
 	}
-
+	q := make([]queueItem, 0)
 	for i := 0; i < len(g.Nodes); i++ {
-		q := make([]queueItem, 0)
+
 		costMatrix[i][1<<uint(i)] = 0
 		prevMatrix[i][1<<uint(i)] = g.Nodes[i]
 		// fmt.Printf("Queue memory loc %p\n", &q)
 		q = append(q, queueItem{g.Nodes[i], startTime, 1 << uint(i)})
+
+	}
+
+	for i := 0; i < len(g.Nodes); i++ {
 		wg.Add(1)
 		// fmt.Println("Starting at node", g.Nodes[i].Name, " work #", i)
 		go workerDijkstra(q, costMatrix, prevMatrix, &wg)
